@@ -1461,11 +1461,25 @@ impl<T: Storage> Raft<T> {
                         }
                     }
                 } else {
-                    let rs = ReadState {
-                        index: self.raft_log.committed,
-                        request_ctx: m.take_entries()[0].take_data(),
-                    };
-                    self.read_states.push(rs);
+                    let mut read_index = INVALID_INDEX;
+                    if self.check_quorum {
+                        read_index = self.raft_log.committed
+                    }
+                    if m.get_from() == INVALID_ID || m.get_from() == self.id {
+                        // from local member
+                        let rs = ReadState {
+                            index: self.raft_log.committed,
+                            request_ctx: m.take_entries()[0].take_data(),
+                        };
+                        self.read_states.push(rs);
+                    } else {
+                        let mut to_send = Message::new();
+                        to_send.set_to(m.get_from());
+                        to_send.set_msg_type(MessageType::MsgReadIndexResp);
+                        to_send.set_index(read_index);
+                        to_send.set_entries(m.take_entries());
+                        self.send(to_send);
+                    }                
                 }
                 return Ok(());
             }
