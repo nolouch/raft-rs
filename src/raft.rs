@@ -1190,7 +1190,7 @@ impl<T: Storage> Raft<T> {
         prs: &mut ProgressSet,
         quorum: usize,
         send_append: &mut bool,
-        more_to_send: &mut Option<Message>,
+        more_to_send: &mut Vec<Message>,
     ) {
         let pr = prs.get_mut(m.get_from()).unwrap();
         pr.recent_active = true;
@@ -1228,7 +1228,7 @@ impl<T: Storage> Raft<T> {
                 to_send.set_msg_type(MessageType::MsgReadIndexResp);
                 to_send.set_index(rs.index);
                 to_send.set_entries(req.take_entries());
-                *more_to_send = Some(to_send);
+                more_to_send.push(to_send);
             }
         }
     }
@@ -1317,7 +1317,7 @@ impl<T: Storage> Raft<T> {
         send_append: &mut bool,
         old_paused: &mut bool,
         maybe_commit: &mut bool,
-        more_to_send: &mut Option<Message>,
+        more_to_send: &mut Vec<Message>,
     ) {
         if self.prs().get(m.get_from()).is_none() {
             debug!("{} no progress available for {}", self.tag, m.get_from());
@@ -1489,7 +1489,7 @@ impl<T: Storage> Raft<T> {
         let mut send_append = false;
         let mut maybe_commit = false;
         let mut old_paused = false;
-        let mut more_to_send = None;
+        let mut more_to_send = vec![];
         self.check_message_with_progress(
             &mut m,
             &mut send_append,
@@ -1515,8 +1515,10 @@ impl<T: Storage> Raft<T> {
             self.send_append(from, prs.get_mut(from).unwrap());
             self.set_prs(prs);
         }
-        if let Some(to_send) = more_to_send {
-            self.send(to_send)
+        if !more_to_send.is_empty() {
+            for to_send in more_to_send.drain(..) {
+                self.send(to_send);
+            }
         }
 
         Ok(())
