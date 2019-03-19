@@ -785,7 +785,7 @@ impl<T: Storage> Raft<T> {
         // could be expensive.
         self.pending_conf_index = self.raft_log.last_index();
 
-        self.append_entry(&mut [Entry::new()]);
+        // self.append_entry(&mut [Entry::new()]);
         info!("{} became leader at term {}", self.tag, self.term);
     }
 
