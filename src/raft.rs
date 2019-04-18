@@ -572,10 +572,7 @@ impl<T: Storage> Raft<T> {
         self.bcast_heartbeat_with_ctx(ctx)
     }
 
-    #[cfg_attr(
-        feature = "cargo-clippy",
-        allow(clippy::needless_pass_by_value)
-    )]
+    #[cfg_attr(feature = "cargo-clippy", allow(clippy::needless_pass_by_value))]
     fn bcast_heartbeat_with_ctx(&mut self, ctx: Option<Vec<u8>>) {
         let self_id = self.id;
         let mut prs = self.take_prs();
@@ -1002,35 +999,38 @@ impl<T: Storage> Raft<T> {
         fail_point!("before_step");
 
         match m.get_msg_type() {
-            MessageType::MsgHup => if self.state != StateRole::Leader {
-                let ents = self
-                    .raft_log
-                    .slice(
-                        self.raft_log.applied + 1,
-                        self.raft_log.committed + 1,
-                        raft_log::NO_LIMIT,
-                    ).expect("unexpected error getting unapplied entries");
-                let n = self.num_pending_conf(&ents);
-                if n != 0 && self.raft_log.committed > self.raft_log.applied {
-                    warn!(
-                        "{} cannot campaign at term {} since there are still {} pending \
-                         configuration changes to apply",
-                        self.tag, self.term, n
+            MessageType::MsgHup => {
+                if self.state != StateRole::Leader {
+                    let ents = self
+                        .raft_log
+                        .slice(
+                            self.raft_log.applied + 1,
+                            self.raft_log.committed + 1,
+                            raft_log::NO_LIMIT,
+                        )
+                        .expect("unexpected error getting unapplied entries");
+                    let n = self.num_pending_conf(&ents);
+                    if n != 0 && self.raft_log.committed > self.raft_log.applied {
+                        warn!(
+                            "{} cannot campaign at term {} since there are still {} pending \
+                             configuration changes to apply",
+                            self.tag, self.term, n
+                        );
+                        return Ok(());
+                    }
+                    info!(
+                        "{} is starting a new election at term {}",
+                        self.tag, self.term
                     );
-                    return Ok(());
-                }
-                info!(
-                    "{} is starting a new election at term {}",
-                    self.tag, self.term
-                );
-                if self.pre_vote {
-                    self.campaign(CAMPAIGN_PRE_ELECTION);
+                    if self.pre_vote {
+                        self.campaign(CAMPAIGN_PRE_ELECTION);
+                    } else {
+                        self.campaign(CAMPAIGN_ELECTION);
+                    }
                 } else {
-                    self.campaign(CAMPAIGN_ELECTION);
+                    debug!("{} ignoring MsgHup because already leader", self.tag);
                 }
-            } else {
-                debug!("{} ignoring MsgHup because already leader", self.tag);
-            },
+            }
             MessageType::MsgRequestVote | MessageType::MsgRequestPreVote => {
                 // We can vote if this is a repeat of a vote we've already cast...
                 let can_vote = (self.vote == m.get_from()) ||
@@ -1460,26 +1460,19 @@ impl<T: Storage> Raft<T> {
                             }
                         }
                     }
+                } else if m.get_from() == INVALID_ID || m.get_from() == self.id {
+                    let rs = ReadState {
+                        index: self.raft_log.committed,
+                        request_ctx: m.take_entries()[0].take_data(),
+                    };
+                    self.read_states.push(rs);
                 } else {
-                    let mut read_index = INVALID_INDEX;
-                    if self.check_quorum {
-                        read_index = self.raft_log.committed
-                    }
-                    if m.get_from() == INVALID_ID || m.get_from() == self.id {
-                        // from local member
-                        let rs = ReadState {
-                            index: self.raft_log.committed,
-                            request_ctx: m.take_entries()[0].take_data(),
-                        };
-                        self.read_states.push(rs);
-                    } else {
-                        let mut to_send = Message::new();
-                        to_send.set_to(m.get_from());
-                        to_send.set_msg_type(MessageType::MsgReadIndexResp);
-                        to_send.set_index(read_index);
-                        to_send.set_entries(m.take_entries());
-                        self.send(to_send);
-                    }                
+                    let mut to_send = Message::new();
+                    to_send.set_to(m.get_from());
+                    to_send.set_msg_type(MessageType::MsgReadIndexResp);
+                    to_send.set_index(self.raft_log.committed);
+                    to_send.set_entries(m.take_entries());
+                    self.send(to_send);
                 }
                 return Ok(());
             }
